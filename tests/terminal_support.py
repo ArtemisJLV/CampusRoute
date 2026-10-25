@@ -16,9 +16,15 @@ class ReplyScreen(pyte.Screen):
     def __init__(self, columns, rows, send):
         super().__init__(columns, rows)
         self.send = send
+        self.cursor_reports = 0
 
     def write_process_input(self, data):
         self.send(data)
+
+    def report_device_status(self, mode):
+        super().report_device_status(mode)
+        if mode == 6:
+            self.cursor_reports += 1
 
 
 class Terminal:
@@ -50,17 +56,14 @@ class Terminal:
                 raise AssertionError('\n'.join(self.screen.display) + '\n' + repr(self.output[-2000:]))
             self.read()
 
-    def read_for(self, seconds):
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            self.read()
-
     def send(self, text):
         self.child.send(text)
 
     def resize(self, rows, columns):
+        cursor_reports = self.screen.cursor_reports
         self.screen.resize(lines=rows, columns=columns)
         self.child.setwinsize(rows, columns)
+        self.wait(lambda: self.screen.cursor_reports > cursor_reports)
 
     def finish(self, timeout=10):
         deadline = time.monotonic() + timeout

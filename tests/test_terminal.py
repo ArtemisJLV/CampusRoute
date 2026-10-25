@@ -34,27 +34,30 @@ class TerminalTests(unittest.TestCase):
         terminal.wait(lambda: PROMPT in terminal.screen.display[terminal.screen.cursor.y])
         return terminal
 
-    def assert_input(self, terminal, text, offset=None):
-        line = terminal.screen.display[terminal.screen.cursor.y]
-        self.assertIn(PROMPT + text, line)
-        self.assertEqual(terminal.screen.cursor.x, wcswidth(PROMPT) + (len(text) if offset is None else offset))
-        self.assertFalse(terminal.screen.cursor.hidden)
+    def wait_input(self, terminal, text, offset=None):
+        expected_x = wcswidth(PROMPT) + (len(text) if offset is None else offset)
+        terminal.wait(lambda: PROMPT + text in terminal.screen.display[terminal.screen.cursor.y]
+                      and terminal.screen.cursor.x == expected_x
+                      and not terminal.screen.cursor.hidden)
+
+    def wait_status_change(self, terminal):
+        before = next(line for line in terminal.screen.display if '当前累计距离：' in line)
+        terminal.wait(lambda: any('当前累计距离：' in line and line != before
+                                 for line in terminal.screen.display))
 
     def test_live_status_keeps_partial_input_and_editing_cursor(self):
         with tempfile.TemporaryDirectory(prefix='terminal-status-', dir=CACHE) as directory:
             terminal = self.launch(Path(directory), probe=True)
             terminal.send('12')
-            terminal.wait(lambda: PROMPT + '12' in terminal.screen.display[terminal.screen.cursor.y])
-            before = '\n'.join(terminal.screen.display)
-            terminal.read_for(1.2)
-            self.assertNotEqual('\n'.join(terminal.screen.display), before)
-            self.assert_input(terminal, '12')
+            self.wait_input(terminal, '12')
+            self.wait_status_change(terminal)
+            self.wait_input(terminal, '12')
             terminal.send('\033[D')
-            terminal.read_for(1.2)
-            self.assert_input(terminal, '12', 1)
+            self.wait_input(terminal, '12', 1)
+            self.wait_status_change(terminal)
+            self.wait_input(terminal, '12', 1)
             terminal.send('\1776')
-            terminal.read_for(0.3)
-            self.assert_input(terminal, '62', 1)
+            self.wait_input(terminal, '62', 1)
             terminal.send('\r')
             terminal.finish()
             self.assertIn('输入结果：62', terminal.output)
@@ -63,11 +66,10 @@ class TerminalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='terminal-resize-', dir=CACHE) as directory:
             terminal = self.launch(Path(directory), probe=True)
             terminal.send('6')
-            terminal.read_for(0.3)
+            self.wait_input(terminal, '6')
             for rows, columns in ((14, 36), (40, 100), (24, 60)):
                 terminal.resize(rows, columns)
-                terminal.read_for(0.6)
-                self.assert_input(terminal, '6')
+                self.wait_input(terminal, '6')
                 self.assertGreater(terminal.screen.cursor.y, 5)
             terminal.send('\r')
             terminal.finish()

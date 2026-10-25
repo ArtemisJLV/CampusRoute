@@ -1,5 +1,9 @@
 name: 检查与构建
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -13,14 +17,13 @@ env:
   TMP: ${{ github.workspace }}/work/.cache/tmp
 jobs:
   test:
-    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    name: ${{ matrix.os }} / Python 3.11—3.15
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
-        python: ['3.11', '3.12', '3.13', '3.14', '3.15']
     steps:
       - uses: actions/checkout@v6
         with:
@@ -29,23 +32,26 @@ jobs:
       - name: 准备缓存目录
         shell: bash
         run: mkdir -p work/.cache/tmp
-      - uses: actions/setup-python@v7
+      - name: Python 3.11
+        uses: ./.github/actions/test-python
         with:
-          python-version: ${{ matrix.python }}
-      - run: python -m pip install -e ".[dev,ios]"
-      - run: python -m ruff check src tools tests
-      - run: python tools/check_source.py
-      - run: python -m unittest discover -s tests -v
-      - run: python tools/check_environment.py --backend ios
-      - run: python -m pip check
-      - run: node --check src/campusroute/web/editor.js
-      - name: 检查 macOS 启动脚本
-        if: runner.os == 'macOS'
-        run: zsh -n CampusRoute.command
-      - name: 验证 Windows 启动器
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: echo 0 | CampusRoute.cmd
+          python-version: '3.11'
+      - name: Python 3.12
+        uses: ./.github/actions/test-python
+        with:
+          python-version: '3.12'
+      - name: Python 3.13
+        uses: ./.github/actions/test-python
+        with:
+          python-version: '3.13'
+      - name: Python 3.14
+        uses: ./.github/actions/test-python
+        with:
+          python-version: '3.14'
+      - name: Python 3.15
+        uses: ./.github/actions/test-python
+        with:
+          python-version: '3.15'
   package:
     name: Python 发行包
     runs-on: ubuntu-latest
