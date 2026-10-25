@@ -3,13 +3,15 @@ import asyncio
 import logging
 import math
 import signal
-import shutil
 import sys
 import threading
 import time
-import unicodedata
 import webbrowser
 from pathlib import Path
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import DummyHistory
+from prompt_toolkit.patch_stdout import patch_stdout
 
 from campusroute import __version__
 from campusroute.backends import InstallationError, SessionError, get_backend
@@ -50,7 +52,8 @@ class ConsoleApp:
         self.commands = asyncio.Queue()
         self.map_server = None
         self.closing = False
-        self.status_panel_visible = False
+        self.session = None
+        self.menu_message = ''
         self.last_status_refresh = 0
 
     def save_settings(self):
@@ -72,48 +75,29 @@ class ConsoleApp:
         return routes + ([self.route] if self.route not in routes and not self.route.properties.get('local_id') else [])
 
     def show_menu(self, message=''):
-        if sys.stdout.isatty():
-            print('\033[2J\033[H', end='')
-        for line in (f'CampusRoute {__version__}  |  {self.backend.name} 路线调试',
-                     '在家里我们就练起来', f'路线：{self.route.name}',
-                     f'配速：{pace_label(self.pace_s)}／公里；目标：{self.target_m / 1000:g}公里'):
-            print(self.terminal_line(line) if sys.stdout.isatty() else line)
-        for line in self.status_lines():
-            print(self.terminal_line(line) if sys.stdout.isatty() else line)
-        self.status_panel_visible = self.motion is not None
-        self.last_status_refresh = time.monotonic()
-        if message:
-            print('\n' + message)
-        print('\n1  连接手机并准备起点')
-        print('2  开始／继续移动')
-        print('3  暂停移动')
-        print('4  中止本次移动，保持当前位置')
-        print('5  恢复真实定位并断开连接')
-        print('6  刷新当前状态')
-        print('7  选择路线／导入自定义路线')
-        print('8  设置配速与目标距离')
-        print('9  打开操场地图／绘制自定义路线')
-        if hasattr(self.backend, 'install'):
-            print('10 安装／更新 Android 配套 APK')
-        print(f'11 设置配速／轨迹波动（{self.variation.label}）')
-        print(f'12 自定义路线自动保存（{"开启" if self.save_custom_routes else "关闭"}）')
-        print('0  恢复真实定位并退出')
-        print('\n请选择数字并按回车：', end='', flush=True)
+        self.menu_message = message
+        if self.session is None:
+            print(self.menu_text(), end='', flush=True)
+        else:
+            self.session.app.invalidate()
 
-    @staticmethod
-    def terminal_line(line):
-        # 按显示宽度截断状态行，避免长名称挤占菜单。
-        available = max(1, shutil.get_terminal_size().columns - 1)
-        output, width = [], 0
-        for char in line:
-            if unicodedata.category(char).startswith('C'):
-                char = ' '
-            size = 0 if unicodedata.combining(char) else 2 if unicodedata.east_asian_width(char) in 'WF' else 1
-            if width + size > available:
-                break
-            output.append(char)
-            width += size
-        return ''.join(output)
+    def menu_text(self):
+        lines = [f'CampusRoute {__version__}  |  {self.backend.name} 路线调试',
+                 '在家里我们就练起来', f'路线：{self.route.name}',
+                 f'配速：{pace_label(self.pace_s)}／公里；目标：{self.target_m / 1000:g}公里',
+                 *self.status_lines()]
+        if self.menu_message:
+            lines.extend(('', self.menu_message))
+        lines.extend(('', '1  连接手机并准备起点', '2  开始／继续移动', '3  暂停移动',
+                      '4  中止本次移动，保持当前位置', '5  恢复真实定位并断开连接',
+                      '6  刷新当前状态', '7  选择路线／导入自定义路线',
+                      '8  设置配速与目标距离', '9  打开操场地图／绘制自定义路线'))
+        if hasattr(self.backend, 'install'):
+            lines.append('10 安装／更新 Android 配套 APK')
+        lines.extend((f'11 设置配速／轨迹波动（{self.variation.label}）',
+                      f'12 自定义路线自动保存（{"开启" if self.save_custom_routes else "关闭"}）',
+                      '0  恢复真实定位并退出', '', '请选择数字并按回车：'))
+        return '\n'.join(lines)
 
     def status_lines(self):
         lines = ['状态：' + (PHASE_NAMES[self.motion.phase] if self.motion else '尚未连接')]
@@ -133,17 +117,32 @@ class ConsoleApp:
 
     def refresh_status(self):
         now = time.monotonic()
-        if not sys.stdout.isatty() or not self.status_panel_visible or now - self.last_status_refresh < 1:
-            return
-        # 更新状态区域时保留用户正在输入的内容。
-        panel = ''.join(f'\033[{row};1H\033[2K' + self.terminal_line(line)
-                        for row, line in enumerate(self.status_lines(), 5))
-        print('\033[s' + panel + '\033[u', end='', flush=True)
-        self.last_status_refresh = now
+        if self.session is not None and now - self.last_status_refresh >= 1:
+            self.session.app.invalidate()
+            self.last_status_refresh = now
+
+    def enable_terminal_input(self):
+        self.session = PromptSession(
+            history=DummyHistory(), erase_when_done=True,
+            interrupt_exception=EOFError,
+        )
+
+    async def read_command(self, prompt=None):
+        if self.session is None:
+            return await self.commands.get()
+        try:
+            with patch_stdout():
+                return (await self.session.prompt_async(
+                    self.menu_text if prompt is None else prompt, handle_sigint=False,
+                )).strip()
+        except EOFError:
+            self.closing = True
+            return None
 
     async def answer(self, prompt):
-        print(prompt, end='', flush=True)
-        reply = await self.commands.get()
+        if self.session is None:
+            print(prompt, end='', flush=True)
+        reply = await self.read_command(prompt)
         if reply is None:
             self.closing = True
             raise asyncio.CancelledError
@@ -362,6 +361,8 @@ class ConsoleApp:
         loop = asyncio.get_running_loop()
         task = asyncio.current_task()
         input_closed = threading.Event()
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            self.enable_terminal_input()
 
         def receive():
             # 输入线程允许阻塞读取，退出时由主任务完成资源清理。
@@ -388,9 +389,10 @@ class ConsoleApp:
             event = getattr(signal, name, None)
             if event is not None:
                 previous_signals[event] = signal.signal(event, request_exit)
-        pending = asyncio.create_task(self.commands.get())
+        pending = asyncio.create_task(self.read_command())
         try:
-            threading.Thread(target=receive, name='campusroute-input', daemon=True).start()
+            if self.session is None:
+                threading.Thread(target=receive, name='campusroute-input', daemon=True).start()
             self.show_menu()
             while True:
                 # 优先处理排队的停止指令，再发送下一个位置。
@@ -413,7 +415,7 @@ class ConsoleApp:
                     if not keep_running or self.closing:
                         break
                     self.show_menu(message)
-                    pending = asyncio.create_task(self.commands.get())
+                    pending = asyncio.create_task(self.read_command())
                     continue
                 started = time.monotonic()
                 try:

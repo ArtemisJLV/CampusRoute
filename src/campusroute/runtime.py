@@ -10,6 +10,14 @@ class AlreadyRunningError(RuntimeError):
     pass
 
 
+def validate_ios_temporary_directory(directory: Path):
+    if sys.platform != 'darwin':
+        return
+    relay = directory / 'pmd3-xxxxxxxx' / 'relay.sock'
+    if len(os.fsencode(relay)) >= 104:
+        raise RuntimeError('项目路径过长，无法创建 iPhone 本地连接。请将项目放到路径较短的文件夹。')
+
+
 @contextmanager
 def console_output():
     if sys.platform != 'win32' or not sys.stdout.isatty():
@@ -82,7 +90,7 @@ def runtime(root: Path):
     with instance_lock(root):
         cache = root / 'work' / '.cache'
         cache.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix='run-', dir=cache) as directory:
+        with tempfile.TemporaryDirectory(prefix='', dir=cache) as directory:
             previous_directory = tempfile.tempdir
             previous_environment = {key: os.environ.get(key) for key in ('TMPDIR', 'TEMP', 'TMP')}
             tempfile.tempdir = directory
