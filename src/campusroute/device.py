@@ -1,5 +1,7 @@
 import asyncio
+from pathlib import Path
 import sys
+import tempfile
 from contextlib import AsyncExitStack
 
 from packaging.version import Version
@@ -13,6 +15,8 @@ from pymobiledevice3.services.mobile_image_mounter import (
 from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
 from pymobiledevice3.services.dvt.instruments.location_simulation import LocationSimulation
 from pymobiledevice3.usbmux import list_devices
+
+from campusroute.runtime import validate_ios_temporary_directory
 
 
 async def usb_devices():
@@ -32,6 +36,7 @@ class DeviceConnection:
         self.simulated = False
 
     async def connect(self, serial: str):
+        validate_ios_temporary_directory(Path(tempfile.gettempdir()))
         async with await create_using_usbmux(serial=serial, connection_type="USB") as lockdown:
             version = lockdown.all_values["ProductVersion"]
             if Version(version) < Version("17.4"):

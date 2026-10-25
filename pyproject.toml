@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "campusroute"
-version = "1.2.0"
+version = "1.2.1"
 description = "Windows / Android、Windows / iPhone 与 macOS / iPhone 路线与定位调试工具"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,11 +14,12 @@ dependencies = [
   "gpxpy==1.6.2",
   "geographiclib==2.1",
   "geojson==3.2.0",
+  "prompt_toolkit==3.0.53",
 ]
 
 [project.optional-dependencies]
 ios = ["pymobiledevice3==11.36.0", "packaging==26.3"]
-dev = ["build>=1.2", "twine>=6", "ruff>=0.11"]
+dev = ["build>=1.2", "twine>=6", "ruff>=0.11", "pyte>=0.8,<1", "pexpect>=4.9,<5; sys_platform != 'win32'"]
 
 [tool.ruff]
 target-version = "py311"
